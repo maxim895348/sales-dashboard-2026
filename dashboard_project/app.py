@@ -208,4 +208,5 @@ if uploaded_file is not None:
     else:
         st.warning("Пожалуйста, загрузите файл. Убедитесь, что в файле есть лист 'Consolidated' или сводные данные.")
 else:
+
     st.info("⬅️ Загрузите файл Excel в меню слева для начала работы.")
