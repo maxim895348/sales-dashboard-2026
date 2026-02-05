@@ -44,14 +44,13 @@ def load_data(uploaded_file):
         # 3. Чтение данных
         df = pd.read_excel(uploaded_file, sheet_name=target_sheet, header=header_idx)
         
-        # 4. Очистка имен колонок от пробелов
+        # 4. Очистка имен колонок
         df.columns = df.columns.astype(str).str.strip().str.replace('\n', ' ')
         
         # 5. УМНОЕ ПЕРЕИМЕНОВАНИЕ (С защитой от дубликатов)
         col_map = {}
         used_targets = set()
         
-        # Приоритет колонок: сначала ищем точные совпадения
         for col in df.columns:
             new_name = None
             col_lower = col.lower()
@@ -60,25 +59,18 @@ def load_data(uploaded_file):
             elif 'brand' in col_lower: new_name = 'Brand'
             elif 'manager' in col_lower: new_name = 'Manager'
             elif 'sales 2025' in col_lower: new_name = 'Sales_Prev'
-            
-            # Логика для Target и Forecast (берем первые попавшиеся)
             elif 'target 2026' in col_lower: new_name = 'Target'
             elif 'forecast 2026' in col_lower: new_name = 'Forecast'
             elif 'forecast' in col_lower and 'target' not in col_lower: 
-                # Если просто Forecast без года, и это не Target Forecast
                 new_name = 'Forecast'
             
             if new_name:
-                # Если мы уже нашли такую колонку (например, второй Forecast), пропускаем этот дубликат
                 if new_name in used_targets:
                     continue
-                
                 col_map[col] = new_name
                 used_targets.add(new_name)
         
         df = df.rename(columns=col_map)
-        
-        # Удаляем дубликаты колонок, если они все-таки просочились
         df = df.loc[:, ~df.columns.duplicated()]
         
         # 6. Фильтрация мусора
@@ -90,9 +82,11 @@ def load_data(uploaded_file):
         numeric_cols = ['Forecast', 'Target', 'Sales_Prev']
         for col in numeric_cols:
             if col in df.columns:
-                # Приводим к строке -> чистим -> конвертируем
                 df[col] = df[col].astype(str).apply(clean_currency)
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        
+        # 8. ВАЖНО: Сброс индекса, чтобы убрать "дырки" в нумерации
+        df = df.reset_index(drop=True)
                 
         return df
         
@@ -121,7 +115,6 @@ if uploaded_file:
         with st.expander("🔎 Фильтры", expanded=True):
             c1, c2, c3 = st.columns(3)
             
-            # Проверка наличия колонок перед созданием фильтров
             regions = ["Все"] + sorted(df['Region'].unique().astype(str)) if 'Region' in df else ["Все"]
             brands = ["Все"] + sorted(df['Brand'].unique().astype(str)) if 'Brand' in df else ["Все"]
             managers = ["Все"] + sorted(df['Manager'].unique().astype(str)) if 'Manager' in df else ["Все"]
@@ -130,13 +123,18 @@ if uploaded_file:
             sel_brand = c2.selectbox("Бренд", brands)
             sel_manager = c3.selectbox("Менеджер", managers)
 
-        # Фильтрация
-        mask = pd.Series([True] * len(df))
-        if 'Region' in df and sel_region != "Все": mask &= (df['Region'] == sel_region)
-        if 'Brand' in df and sel_brand != "Все": mask &= (df['Brand'] == sel_brand)
-        if 'Manager' in df and sel_manager != "Все": mask &= (df['Manager'] == sel_manager)
+        # --- ПОШАГОВАЯ ФИЛЬТРАЦИЯ (Исправлено) ---
+        # Теперь мы фильтруем таблицу шаг за шагом, это безопаснее
+        df_filtered = df.copy()
         
-        df_filtered = df[mask]
+        if 'Region' in df_filtered.columns and sel_region != "Все":
+            df_filtered = df_filtered[df_filtered['Region'] == sel_region]
+            
+        if 'Brand' in df_filtered.columns and sel_brand != "Все":
+            df_filtered = df_filtered[df_filtered['Brand'] == sel_brand]
+            
+        if 'Manager' in df_filtered.columns and sel_manager != "Все":
+            df_filtered = df_filtered[df_filtered['Manager'] == sel_manager]
 
         # --- KPI ---
         has_forecast = 'Forecast' in df_filtered
@@ -165,8 +163,11 @@ if uploaded_file:
         with t1:
             c_g1, c_g2 = st.columns(2)
             if has_forecast and 'Brand' in df_filtered:
-                fig = px.pie(df_filtered, values='Forecast', names='Brand', title='Продажи по Брендам', hole=0.4)
+                # Группируем, чтобы убрать дубликаты в графике
+                pie_data = df_filtered.groupby('Brand')['Forecast'].sum().reset_index()
+                fig = px.pie(pie_data, values='Forecast', names='Brand', title='Продажи по Брендам', hole=0.4)
                 c_g1.plotly_chart(fig, use_container_width=True)
+                
             if has_forecast and 'Region' in df_filtered:
                 reg_data = df_filtered.groupby('Region')['Forecast'].sum().reset_index()
                 fig = px.bar(reg_data, x='Region', y='Forecast', title='Продажи по Регионам')
